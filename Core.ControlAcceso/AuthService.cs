@@ -6,10 +6,15 @@ namespace Core.ControlAcceso;
 public class AuthService : IAuthService
 {
     private readonly InventarioDbContext _db;
+    private readonly ServicioJwt _jwt;
 
-    public AuthService(InventarioDbContext db)
+    private const int MaxIntentosFallidos = 5;
+    private static readonly TimeSpan DuracionBloqueo = TimeSpan.FromMinutes(15);
+
+    public AuthService(InventarioDbContext db, ServicioJwt jwt)
     {
         _db = db;
+        _jwt = jwt;
     }
 
     public async Task<ResultadoRegistro> RegistrarAsync(string nombre, string correo, string contrasena)
@@ -67,11 +72,9 @@ public class AuthService : IAuthService
         var correoNormalizado = correo.Trim().ToLowerInvariant();
         var usuario = await _db.Usuarios.FirstOrDefaultAsync(u => u.Correo == correoNormalizado);
 
-        // RF-CA-17: no revelar si el correo existe; si no existe, simplemente no hacemos nada
         if (usuario is null || usuario.Activo)
             return;
 
-        // Invalidar tokens anteriores no usados
         var tokensAnteriores = await _db.TokensActivacion
             .Where(t => t.UsuarioId == usuario.Id && !t.Usado)
             .ToListAsync();
@@ -79,6 +82,54 @@ public class AuthService : IAuthService
             t.Usado = true;
 
         await CrearYEncolarTokenActivacionAsync(usuario);
+        await _db.SaveChangesAsync();
+    }
+
+    public async Task<ResultadoLogin> LoginAsync(string correo, string contrasena)
+    {
+        var correoNormalizado = correo.Trim().ToLowerInvariant();
+        var usuario = await _db.Usuarios.FirstOrDefaultAsync(u => u.Correo == correoNormalizado);
+
+        const string mensajeGenerico = "Correo o contrasena incorrectos.";
+
+        if (usuario is null)
+            return new ResultadoLogin(false, null, mensajeGenerico);
+
+        if (!usuario.Activo)
+            return new ResultadoLogin(false, null, "La cuenta no esta activa. Revisa tu correo.");
+
+        if (usuario.BloqueadoHasta is not null && usuario.BloqueadoHasta > DateTime.UtcNow)
+            return new ResultadoLogin(false, null, mensajeGenerico);
+
+        if (!ServicioContrasena.Verificar(contrasena, usuario.HashContrasena))
+        {
+            usuario.IntentosFallidos++;
+            if (usuario.IntentosFallidos >= MaxIntentosFallidos)
+            {
+                usuario.BloqueadoHasta = DateTime.UtcNow.Add(DuracionBloqueo);
+            }
+            await _db.SaveChangesAsync();
+            return new ResultadoLogin(false, null, mensajeGenerico);
+        }
+
+        usuario.IntentosFallidos = 0;
+        usuario.BloqueadoHasta = null;
+        await _db.SaveChangesAsync();
+
+        var token = _jwt.GenerarToken(usuario);
+        return new ResultadoLogin(true, token, null);
+    }
+
+    public async Task CerrarSesionAsync(string jti, DateTime expiracionToken)
+    {
+        var yaInvalidado = await _db.TokensInvalidados.AnyAsync(t => t.Jti == jti);
+        if (yaInvalidado) return;
+
+        _db.TokensInvalidados.Add(new TokenInvalidado
+        {
+            Jti = jti,
+            FechaExpiracionToken = expiracionToken
+        });
         await _db.SaveChangesAsync();
     }
 

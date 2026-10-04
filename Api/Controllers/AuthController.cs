@@ -1,4 +1,7 @@
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using System.IdentityModel.Tokens.Jwt;
+using System.Security.Claims;
 using Core.ControlAcceso;
 
 namespace Api.Controllers;
@@ -16,6 +19,7 @@ public class AuthController : ControllerBase
 
     public record RegistroRequest(string Nombre, string Correo, string Contrasena);
     public record ReenvioRequest(string Correo);
+    public record LoginRequest(string Correo, string Contrasena);
 
     [HttpPost("registro")]
     public async Task<IActionResult> Registrar([FromBody] RegistroRequest request)
@@ -44,7 +48,43 @@ public class AuthController : ControllerBase
     public async Task<IActionResult> ReenviarActivacion([FromBody] ReenvioRequest request)
     {
         await _authService.ReenviarActivacionAsync(request.Correo);
-        // RF-CA-17: respuesta identica exista o no el correo
         return Ok(new { mensaje = "Si el correo esta registrado, se envio un nuevo enlace." });
+    }
+
+    [HttpPost("login")]
+    public async Task<IActionResult> Login([FromBody] LoginRequest request)
+    {
+        var resultado = await _authService.LoginAsync(request.Correo, request.Contrasena);
+
+        if (!resultado.Exitoso)
+            return BadRequest(new { error = resultado.Error });
+
+        return Ok(new { token = resultado.Token });
+    }
+
+    [Authorize]
+    [HttpGet("yo")]
+    public IActionResult Yo()
+    {
+        var correo = User.FindFirstValue(ClaimTypes.Email);
+        var rol = User.FindFirstValue(ClaimTypes.Role);
+
+        return Ok(new { correo, rol });
+    }
+
+    [Authorize]
+    [HttpPost("logout")]
+    public async Task<IActionResult> Logout()
+    {
+        var jti = User.FindFirstValue(JwtRegisteredClaimNames.Jti);
+        var expClaim = User.FindFirstValue(JwtRegisteredClaimNames.Exp);
+
+        if (jti is null || expClaim is null || !long.TryParse(expClaim, out var expUnix))
+            return BadRequest(new { error = "Token invalido." });
+
+        var expiracion = DateTimeOffset.FromUnixTimeSeconds(expUnix).UtcDateTime;
+        await _authService.CerrarSesionAsync(jti, expiracion);
+
+        return Ok(new { mensaje = "Sesion cerrada correctamente." });
     }
 }

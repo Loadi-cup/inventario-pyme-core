@@ -15,7 +15,9 @@ public class Usuario
     public Rol Rol { get; set; } = Rol.Estandar;
     public bool Activo { get; set; } = false;
 
-    // RF-CA-19: bloqueo por intentos fallidos
     public int IntentosFallidos { get; set; } = 0;
     public DateTime? BloqueadoHasta { get; set; }
+
+    // RF-CA-12: tokens emitidos antes de esta fecha dejan de ser validos
+    public DateTime SesionesValidasDesde { get; set; } = DateTime.UtcNow;
 }
