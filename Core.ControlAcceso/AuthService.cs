@@ -133,6 +133,62 @@ public class AuthService : IAuthService
         await _db.SaveChangesAsync();
     }
 
+    // RF-CA-21: listado sin datos sensibles (sin hash ni tokens)
+    public async Task<List<UsuarioResumen>> ListarUsuariosAsync()
+    {
+        return await _db.Usuarios
+            .Select(u => new UsuarioResumen(u.Id, u.Nombre, u.Correo, u.Rol.ToString(), u.Activo))
+            .ToListAsync();
+    }
+
+    // RF-CA-08: cambio de rol reservado al Administrador (verificado tambien en el controlador via [Authorize])
+    public async Task<(bool Exitoso, string? Error)> CambiarRolAsync(int adminId, int usuarioId, string nuevoRol)
+    {
+        if (adminId == usuarioId)
+            return (false, "No puedes cambiar tu propio rol.");
+
+        if (!Enum.TryParse<Rol>(nuevoRol, ignoreCase: true, out var rolParseado))
+            return (false, "Rol invalido. Usa 'Estandar' o 'Administrador'.");
+
+        var usuario = await _db.Usuarios.FindAsync(usuarioId);
+        if (usuario is null)
+            return (false, "Usuario no encontrado.");
+
+        usuario.Rol = rolParseado;
+        await _db.SaveChangesAsync();
+
+        return (true, null);
+    }
+
+    // RF-CA-20: desactivar invalida sesiones abiertas (via SesionesValidasDesde)
+    public async Task<(bool Exitoso, string? Error)> DesactivarUsuarioAsync(int adminId, int usuarioId)
+    {
+        if (adminId == usuarioId)
+            return (false, "No puedes desactivarte a ti mismo.");
+
+        var usuario = await _db.Usuarios.FindAsync(usuarioId);
+        if (usuario is null)
+            return (false, "Usuario no encontrado.");
+
+        usuario.Activo = false;
+        usuario.SesionesValidasDesde = DateTime.UtcNow;
+        await _db.SaveChangesAsync();
+
+        return (true, null);
+    }
+
+    public async Task<(bool Exitoso, string? Error)> ReactivarUsuarioAsync(int usuarioId)
+    {
+        var usuario = await _db.Usuarios.FindAsync(usuarioId);
+        if (usuario is null)
+            return (false, "Usuario no encontrado.");
+
+        usuario.Activo = true;
+        await _db.SaveChangesAsync();
+
+        return (true, null);
+    }
+
     private async Task CrearYEncolarTokenActivacionAsync(Usuario usuario)
     {
         var token = new TokenActivacion
