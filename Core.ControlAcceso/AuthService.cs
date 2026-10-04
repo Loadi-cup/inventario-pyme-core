@@ -133,7 +133,6 @@ public class AuthService : IAuthService
         await _db.SaveChangesAsync();
     }
 
-    // RF-CA-21: listado sin datos sensibles (sin hash ni tokens)
     public async Task<List<UsuarioResumen>> ListarUsuariosAsync()
     {
         return await _db.Usuarios
@@ -141,7 +140,6 @@ public class AuthService : IAuthService
             .ToListAsync();
     }
 
-    // RF-CA-08: cambio de rol reservado al Administrador (verificado tambien en el controlador via [Authorize])
     public async Task<(bool Exitoso, string? Error)> CambiarRolAsync(int adminId, int usuarioId, string nuevoRol)
     {
         if (adminId == usuarioId)
@@ -160,7 +158,6 @@ public class AuthService : IAuthService
         return (true, null);
     }
 
-    // RF-CA-20: desactivar invalida sesiones abiertas (via SesionesValidasDesde)
     public async Task<(bool Exitoso, string? Error)> DesactivarUsuarioAsync(int adminId, int usuarioId)
     {
         if (adminId == usuarioId)
@@ -186,6 +183,113 @@ public class AuthService : IAuthService
         usuario.Activo = true;
         await _db.SaveChangesAsync();
 
+        return (true, null);
+    }
+
+    // RF-CA-09: respuesta identica exista o no el correo
+    public async Task SolicitarRecuperacionAsync(string correo)
+    {
+        var correoNormalizado = correo.Trim().ToLowerInvariant();
+        var usuario = await _db.Usuarios.FirstOrDefaultAsync(u => u.Correo == correoNormalizado);
+
+        if (usuario is null)
+            return;
+
+        var codigosAnteriores = await _db.CodigosRecuperacion
+            .Where(c => c.UsuarioId == usuario.Id && !c.Usado)
+            .ToListAsync();
+        foreach (var c in codigosAnteriores)
+            c.Usado = true;
+
+        var codigo = new CodigoRecuperacion
+        {
+            UsuarioId = usuario.Id,
+            Codigo = ServicioCodigos.GenerarCodigo(),
+            FechaVencimiento = DateTime.UtcNow.AddHours(1)
+        };
+        _db.CodigosRecuperacion.Add(codigo);
+
+        var enlace = $"https://localhost:5118/api/auth/restablecer?codigo={codigo.Codigo}";
+        _db.CorreosEnCola.Add(new CorreoEnCola
+        {
+            Destinatario = usuario.Correo,
+            Asunto = "Recupera tu contrasena - Inventario Pyme",
+            Cuerpo = $"Hola {usuario.Nombre}, usa este enlace para definir una nueva contrasena: {enlace}"
+        });
+
+        await _db.SaveChangesAsync();
+    }
+
+    // RF-CA-10, RF-CA-11, RF-CA-12
+    public async Task<(bool Exitoso, string? Error)> RestablecerConCodigoAsync(string codigo, string nuevaContrasena)
+    {
+        var registro = await _db.CodigosRecuperacion
+            .Include(c => c.Usuario)
+            .FirstOrDefaultAsync(c => c.Codigo == codigo);
+
+        if (registro is null || registro.Usado || registro.FechaVencimiento < DateTime.UtcNow)
+            return (false, "El codigo es invalido o ya vencio.");
+
+        if (!ServicioContrasena.CumplePolitica(nuevaContrasena))
+            return (false, "La contrasena debe tener al menos 8 caracteres, con letras y numeros.");
+
+        registro.Usado = true;
+        registro.Usuario.HashContrasena = ServicioContrasena.Hashear(nuevaContrasena);
+        registro.Usuario.SesionesValidasDesde = DateTime.UtcNow; // RF-CA-12
+
+        await _db.SaveChangesAsync();
+        return (true, null);
+    }
+
+    // RF-CA-13: restablecimiento forzado por Administrador
+    public async Task<(bool Exitoso, string? Error)> ForzarRestablecimientoAsync(int usuarioId)
+    {
+        var usuario = await _db.Usuarios.FindAsync(usuarioId);
+        if (usuario is null)
+            return (false, "Usuario no encontrado.");
+
+        // Invalida la contrasena actual generando un hash aleatorio imposible de adivinar
+        usuario.HashContrasena = ServicioContrasena.Hashear(ServicioCodigos.GenerarCodigo());
+        usuario.SesionesValidasDesde = DateTime.UtcNow;
+
+        var codigo = new CodigoRecuperacion
+        {
+            UsuarioId = usuario.Id,
+            Codigo = ServicioCodigos.GenerarCodigo(),
+            FechaVencimiento = DateTime.UtcNow.AddHours(1)
+        };
+        _db.CodigosRecuperacion.Add(codigo);
+
+        var enlace = $"https://localhost:5118/api/auth/restablecer?codigo={codigo.Codigo}";
+        _db.CorreosEnCola.Add(new CorreoEnCola
+        {
+            Destinatario = usuario.Correo,
+            Asunto = "Tu contrasena fue restablecida - Inventario Pyme",
+            Cuerpo = $"Hola {usuario.Nombre}, un administrador restablecio tu contrasena. Define una nueva aqui: {enlace}"
+        });
+
+        await _db.SaveChangesAsync();
+        return (true, null);
+    }
+
+    // RF-CA-22
+    public async Task<(bool Exitoso, string? Error)> CambiarContrasenaConSesionAsync(
+        int usuarioId, string contrasenaActual, string contrasenaNueva)
+    {
+        var usuario = await _db.Usuarios.FindAsync(usuarioId);
+        if (usuario is null)
+            return (false, "Usuario no encontrado.");
+
+        if (!ServicioContrasena.Verificar(contrasenaActual, usuario.HashContrasena))
+            return (false, "La contrasena actual es incorrecta.");
+
+        if (!ServicioContrasena.CumplePolitica(contrasenaNueva))
+            return (false, "La contrasena nueva debe tener al menos 8 caracteres, con letras y numeros.");
+
+        usuario.HashContrasena = ServicioContrasena.Hashear(contrasenaNueva);
+        usuario.SesionesValidasDesde = DateTime.UtcNow; // RF-CA-12
+
+        await _db.SaveChangesAsync();
         return (true, null);
     }
 

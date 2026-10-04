@@ -20,6 +20,12 @@ public class AuthController : ControllerBase
     public record RegistroRequest(string Nombre, string Correo, string Contrasena);
     public record ReenvioRequest(string Correo);
     public record LoginRequest(string Correo, string Contrasena);
+    public record RecuperacionRequest(string Correo);
+    public record RestablecerRequest(string Codigo, string NuevaContrasena);
+    public record CambiarContrasenaRequest(string ContrasenaActual, string ContrasenaNueva);
+
+    private int ObtenerIdDesdeToken() =>
+        int.Parse(User.FindFirstValue(ClaimTypes.NameIdentifier)!);
 
     [HttpPost("registro")]
     public async Task<IActionResult> Registrar([FromBody] RegistroRequest request)
@@ -68,7 +74,6 @@ public class AuthController : ControllerBase
     {
         var correo = User.FindFirstValue(ClaimTypes.Email);
         var rol = User.FindFirstValue(ClaimTypes.Role);
-
         return Ok(new { correo, rol });
     }
 
@@ -86,5 +91,38 @@ public class AuthController : ControllerBase
         await _authService.CerrarSesionAsync(jti, expiracion);
 
         return Ok(new { mensaje = "Sesion cerrada correctamente." });
+    }
+
+    [HttpPost("recuperar")]
+    public async Task<IActionResult> Recuperar([FromBody] RecuperacionRequest request)
+    {
+        await _authService.SolicitarRecuperacionAsync(request.Correo);
+        return Ok(new { mensaje = "Si el correo esta registrado, se enviaron instrucciones." });
+    }
+
+    [HttpPost("restablecer")]
+    public async Task<IActionResult> Restablecer([FromBody] RestablecerRequest request)
+    {
+        var (exitoso, error) = await _authService.RestablecerConCodigoAsync(
+            request.Codigo, request.NuevaContrasena);
+
+        if (!exitoso)
+            return BadRequest(new { error });
+
+        return Ok(new { mensaje = "Contrasena actualizada correctamente." });
+    }
+
+    [Authorize]
+    [HttpPost("cambiar-contrasena")]
+    public async Task<IActionResult> CambiarContrasena([FromBody] CambiarContrasenaRequest request)
+    {
+        var usuarioId = ObtenerIdDesdeToken();
+        var (exitoso, error) = await _authService.CambiarContrasenaConSesionAsync(
+            usuarioId, request.ContrasenaActual, request.ContrasenaNueva);
+
+        if (!exitoso)
+            return BadRequest(new { error });
+
+        return Ok(new { mensaje = "Contrasena cambiada correctamente." });
     }
 }

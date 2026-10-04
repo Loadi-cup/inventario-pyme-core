@@ -15,4 +15,8 @@ public interface IAuthService
     Task<(bool Exitoso, string? Error)> CambiarRolAsync(int adminId, int usuarioId, string nuevoRol);
     Task<(bool Exitoso, string? Error)> DesactivarUsuarioAsync(int adminId, int usuarioId);
     Task<(bool Exitoso, string? Error)> ReactivarUsuarioAsync(int usuarioId);
+    Task SolicitarRecuperacionAsync(string correo);
+    Task<(bool Exitoso, string? Error)> RestablecerConCodigoAsync(string codigo, string nuevaContrasena);
+    Task<(bool Exitoso, string? Error)> ForzarRestablecimientoAsync(int usuarioId);
+    Task<(bool Exitoso, string? Error)> CambiarContrasenaConSesionAsync(int usuarioId, string contrasenaActual, string contrasenaNueva);
 }

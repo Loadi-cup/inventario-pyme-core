@@ -7,7 +7,7 @@ namespace Api.Controllers;
 
 [ApiController]
 [Route("api/admin/usuarios")]
-[Authorize(Roles = "Administrador")] // RF-CA-05, RF-CA-06, RD-06: exigencia de rol centralizada aqui
+[Authorize(Roles = "Administrador")]
 public class AdminController : ControllerBase
 {
     private readonly IAuthService _authService;
@@ -19,11 +19,8 @@ public class AdminController : ControllerBase
 
     public record CambiarRolRequest(string NuevoRol);
 
-    private int ObtenerIdDesdeToken()
-    {
-        var idTexto = User.FindFirstValue(ClaimTypes.NameIdentifier);
-        return int.Parse(idTexto!);
-    }
+    private int ObtenerIdDesdeToken() =>
+        int.Parse(User.FindFirstValue(ClaimTypes.NameIdentifier)!);
 
     [HttpGet]
     public async Task<IActionResult> Listar()
@@ -65,5 +62,16 @@ public class AdminController : ControllerBase
             return BadRequest(new { error });
 
         return Ok(new { mensaje = "Usuario reactivado correctamente." });
+    }
+
+    [HttpPost("{id}/forzar-restablecimiento")]
+    public async Task<IActionResult> ForzarRestablecimiento(int id)
+    {
+        var (exitoso, error) = await _authService.ForzarRestablecimientoAsync(id);
+
+        if (!exitoso)
+            return BadRequest(new { error });
+
+        return Ok(new { mensaje = "Restablecimiento forzado. El usuario recibira un correo." });
     }
 }
