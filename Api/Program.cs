@@ -11,6 +11,9 @@ var builder = WebApplication.CreateBuilder(args);
 // --- Base de datos (SQLite) ---
 builder.Services.AddDbContext<InventarioDbContext>(options =>
     options.UseSqlite("Data Source=inventario.db"));
+    
+builder.Services.AddDbContext<Core.Negocio.NegocioDbContext>(options =>
+    options.UseSqlite("Data Source=inventario.db"));
 
 // --- JWT ---
 var claveJwt = builder.Configuration["Jwt:Clave"]
@@ -28,7 +31,6 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
             IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(claveJwt))
         };
 
-        // RF-CA-18 y RF-CA-12: rechazar tokens invalidados o emitidos antes de un cambio de contrasena
         options.Events = new JwtBearerEvents
         {
             OnTokenValidated = async context =>
@@ -71,9 +73,17 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
 
 builder.Services.AddAuthorization();
 
+// --- SMTP (variables de entorno, RD-10) ---
+var usuarioSmtp = builder.Configuration["Smtp:Usuario"]
+    ?? throw new InvalidOperationException("Falta la variable de entorno Smtp__Usuario");
+var contrasenaSmtp = builder.Configuration["Smtp:ContrasenaApp"]
+    ?? throw new InvalidOperationException("Falta la variable de entorno Smtp__ContrasenaApp");
+
 // --- Servicios propios del Core ---
 builder.Services.AddSingleton(new ServicioJwt(claveJwt));
 builder.Services.AddScoped<IAuthService, AuthService>();
+builder.Services.AddScoped(sp =>
+    new ServicioEnvioCorreo(sp.GetRequiredService<InventarioDbContext>(), usuarioSmtp, contrasenaSmtp));
 
 builder.Services.AddControllers();
 builder.Services.AddEndpointsApiExplorer();
@@ -91,5 +101,20 @@ app.UseAuthentication();
 app.UseAuthorization();
 
 app.MapControllers();
+
+// Endpoint para disparar manualmente el envio de la cola (RF-NOT-09)
+app.MapPost("/api/admin/enviar-correos-pendientes", async (ServicioEnvioCorreo servicio) =>
+{
+    var enviados = await servicio.ProcesarPendientesAsync();
+    return Results.Ok(new { enviados });
+});
+
+app.MapGet("/api/admin/diagnostico-correos", async (InventarioDbContext db) =>
+{
+    var correos = await db.CorreosEnCola.ToListAsync();
+    return Results.Ok(correos.Select(c => new {
+        c.Destinatario, c.Estado, c.Intentos, c.UltimoError
+    }));
+});
 
 app.Run();

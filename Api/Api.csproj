@@ -18,6 +18,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\Core.ControlAcceso\Core.ControlAcceso.csproj" />
+    <ProjectReference Include="..\Core.Negocio\Core.Negocio.csproj" />
   </ItemGroup>
 
 </Project>
