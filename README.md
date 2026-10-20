@@ -159,3 +159,105 @@ Los estados y transiciones están declarados en `Core.Negocio/Modelos/EstadoOrde
 ## Diagnóstico (solo para desarrollo)
 
 `GET /api/admin/diagnostico-correos` — lista el contenido de la cola de correos, útil para ver el código de activación/recuperación sin depender del envío real durante el desarrollo. No está pensado para producción.
+
+## Gestión de permisos (Asignación 2)
+
+Pieza `Core.Permisos`, expuesta por `Api/Controllers/PermisosController.cs`. No depende de `Core.ControlAcceso` ni de `Core.Negocio`: guarda los usuarios como ids numéricos.
+
+Transiciones válidas: `Pendiente → Aprobada → Aplicada` y `Pendiente → Rechazada`. Cualquier otra se rechaza y el estado no cambia. Como `Aprobada → Aplicada` es automática e inmediata, aprobar deja la solicitud en `Aplicada`. Todas las transiciones se resuelven en un solo punto: el diccionario `TransicionesPermitidas` de `Core.Permisos/SolicitudPermisoService.cs`. El Administrador también puede crear solicitudes (se usa para probar RF-GP-07).
+
+### Preparar y arrancar
+
+```powershell
+dotnet ef database update --project Core.ControlAcceso --startup-project Api
+dotnet ef database update --project Core.Negocio --startup-project Api --context NegocioDbContext
+dotnet ef database update --project Core.Permisos --startup-project Api --context PermisosDbContext
+dotnet run --project Api
+```
+
+Requiere las variables de entorno de la sección anterior. El servidor queda en `http://localhost:5118`.
+
+### Usuarios necesarios
+
+1. Registrar dos usuarios (`POST /api/auth/registro`), por ejemplo `std@ejemplo.com` y `adm@ejemplo.com`.
+2. Con el servidor detenido, activarlos y convertir uno en Administrador sobre `Api/inventario.db`:
+
+```sql
+UPDATE Usuarios SET Activo = 1 WHERE Correo IN ('std@ejemplo.com', 'adm@ejemplo.com');
+UPDATE Usuarios SET Rol = 1 WHERE Correo = 'adm@ejemplo.com';
+```
+
+3. Arrancar de nuevo el servidor y obtener los tokens:
+
+```powershell
+$loginStd = @{ correo = "std@ejemplo.com"; contrasena = "<clave>" } | ConvertTo-Json
+$tokenEstandar = (Invoke-RestMethod -Uri "http://localhost:5118/api/auth/login" -Method Post -Body $loginStd -ContentType "application/json").token
+$loginAdm = @{ correo = "adm@ejemplo.com"; contrasena = "<clave>" } | ConvertTo-Json
+$tokenAdmin = (Invoke-RestMethod -Uri "http://localhost:5118/api/auth/login" -Method Post -Body $loginAdm -ContentType "application/json").token
+```
+
+### Cómo provocar cada criterio
+
+Con una base de permisos vacía, las solicitudes se numeran 1, 2 y 3. La función `Probar` muestra los rechazos en lugar de lanzar error.
+
+```powershell
+function Probar($uri, $metodo, $headers, $body) {
+  try {
+    $p = @{ Uri = $uri; Method = $metodo; Headers = $headers }
+    if ($body) { $p.Body = $body; $p.ContentType = "application/json" }
+    Invoke-RestMethod @p
+  } catch {
+    "RECHAZADO: " + $_.Exception.Response.StatusCode.value__ + " " + $_.ErrorDetails.Message
+  }
+}
+
+$base = "http://localhost:5118/api/permisos"
+$h  = @{ Authorization = "Bearer $tokenEstandar" }
+$ha = @{ Authorization = "Bearer $tokenAdmin" }
+$b  = @{ permiso = "exportar-reportes" } | ConvertTo-Json
+
+# RF-GP-01: un Estándar crea una solicitud; nace Pendiente (id 1)
+Probar $base Post $h $b
+
+# RF-GP-02: el Admin ve las pendientes de todos; el Estándar solo las suyas y recibe 403 en /pendientes
+Probar "$base/pendientes" Get $ha $null
+Probar "$base/mias" Get $h $null
+Probar "$base/pendientes" Get $h $null
+
+# RF-GP-03 y RF-GP-05: aprobar deja aprobador y fecha, y el permiso queda aplicado sin más pasos
+Probar "$base/1/aprobar" Post $ha $null
+Probar "$base/tengo?permiso=exportar-reportes" Get $h $null
+
+# RF-GP-06: aprobar dos veces la misma solicitud se rechaza y el estado no cambia
+Probar "$base/1/aprobar" Post $ha $null
+
+# RF-GP-04: rechazar sin motivo no se completa; con motivo sí (solicitud 2)
+Probar $base Post $h $b
+$sin = @{ motivo = "" } | ConvertTo-Json
+$con = @{ motivo = "No corresponde a su rol" } | ConvertTo-Json
+Probar "$base/2/rechazar" Post $ha $sin
+Probar "$base/2/rechazar" Post $ha $con
+
+# RF-GP-06: pasar de Rechazada a Aplicada se rechaza
+Probar "$base/2/aprobar" Post $ha $null
+
+# RF-GP-07: el Administrador crea su propia solicitud (id 3) e intenta aprobarla: se rechaza
+Probar $base Post $ha $b
+Probar "$base/3/aprobar" Post $ha $null
+
+# RD-07: entrada inválida produce un rechazo controlado
+$vacio = @{ permiso = "" } | ConvertTo-Json
+Probar $base Post $h $vacio
+```
+
+RD-09: detener el servidor con `Ctrl + C`, volver a arrancarlo y repetir `Probar "$base/mias" Get $h $null`. Las solicitudes siguen ahí.
+
+## Pruebas
+
+Un solo comando, desde la raíz de un clon limpio, ejecuta toda la suite:
+
+```powershell
+dotnet test Core.Permisos.Tests
+```
+
+Las pruebas ejercitan `Core.Permisos` directamente, con SQLite en memoria y sin levantar la aplicación (RD-12). Cada prueba crea su propia base, así que son independientes y pasan en cualquier orden. Cubren la transición válida (aprobar y rechazar, con aprobador, fecha y motivo) y las transiciones prohibidas (aprobar dos veces, aprobar una rechazada, rechazar sin motivo y aprobar la solicitud propia), verificando siempre que el estado no cambia.
