@@ -2,4 +2,6 @@
   <Project Path="Api/Api.csproj" />
   <Project Path="Core.ControlAcceso/Core.ControlAcceso.csproj" />
   <Project Path="Core.Negocio/Core.Negocio.csproj" />
+  <Project Path="Core.Permisos.Tests/Core.Permisos.Tests.csproj" />
+  <Project Path="Core.Permisos/Core.Permisos.csproj" />
 </Solution>
