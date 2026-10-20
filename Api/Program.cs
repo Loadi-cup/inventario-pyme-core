@@ -5,14 +5,17 @@ using System.IdentityModel.Tokens.Jwt;
 using System.Security.Claims;
 using System.Text;
 using Core.ControlAcceso;
+using Core.Negocio;
+using Core.Permisos;
 
 var builder = WebApplication.CreateBuilder(args);
 
-// --- Base de datos (SQLite) ---
+// --- Bases de datos (SQLite) ---
 builder.Services.AddDbContext<InventarioDbContext>(options =>
     options.UseSqlite("Data Source=inventario.db"));
-    
-builder.Services.AddDbContext<Core.Negocio.NegocioDbContext>(options =>
+builder.Services.AddDbContext<NegocioDbContext>(options =>
+    options.UseSqlite("Data Source=inventario.db"));
+builder.Services.AddDbContext<PermisosDbContext>(options =>
     options.UseSqlite("Data Source=inventario.db"));
 
 // --- JWT ---
@@ -84,6 +87,7 @@ builder.Services.AddSingleton(new ServicioJwt(claveJwt));
 builder.Services.AddScoped<IAuthService, AuthService>();
 builder.Services.AddScoped(sp =>
     new ServicioEnvioCorreo(sp.GetRequiredService<InventarioDbContext>(), usuarioSmtp, contrasenaSmtp));
+builder.Services.AddScoped<SolicitudPermisoService>();
 
 builder.Services.AddControllers();
 builder.Services.AddEndpointsApiExplorer();
@@ -102,7 +106,6 @@ app.UseAuthorization();
 
 app.MapControllers();
 
-// Endpoint para disparar manualmente el envio de la cola (RF-NOT-09)
 app.MapPost("/api/admin/enviar-correos-pendientes", async (ServicioEnvioCorreo servicio) =>
 {
     var enviados = await servicio.ProcesarPendientesAsync();
