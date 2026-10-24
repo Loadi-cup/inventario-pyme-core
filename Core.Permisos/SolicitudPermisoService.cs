@@ -10,7 +10,6 @@ public class SolicitudPermisoService
     private readonly PermisosDbContext _db;
 
     // RD-04: unico lugar donde se declaran las transiciones validas.
-    // Agregar una transicion nueva implica tocar solo este diccionario.
     private static readonly Dictionary<EstadoSolicitud, EstadoSolicitud[]> TransicionesPermitidas = new()
     {
         [EstadoSolicitud.Pendiente] = new[] { EstadoSolicitud.Aprobada, EstadoSolicitud.Rechazada },
@@ -27,14 +26,20 @@ public class SolicitudPermisoService
     private static bool PuedeTransicionar(EstadoSolicitud desde, EstadoSolicitud hacia) =>
         TransicionesPermitidas.TryGetValue(desde, out var permitidas) && permitidas.Contains(hacia);
 
-    // Unico metodo que cambia el estado de una solicitud (RD-04, RF-GP-06)
-    private static (bool Exitoso, string? Error) Transicionar(SolicitudPermiso solicitud, EstadoSolicitud nuevo)
+    // RF-GP-06: operacion generica que cambia el estado solo si la tabla lo permite.
+    // La API no la expone; existe para probar la maquina de estados directamente (RD-12).
+    public async Task<ResultadoPermiso> TransicionarAsync(int solicitudId, EstadoSolicitud nuevoEstado)
     {
-        if (!PuedeTransicionar(solicitud.Estado, nuevo))
-            return (false, $"No se puede pasar de {solicitud.Estado} a {nuevo}.");
+        var solicitud = await _db.Solicitudes.FindAsync(solicitudId);
+        if (solicitud is null)
+            return new(false, "Solicitud no encontrada.");
 
-        solicitud.Estado = nuevo;
-        return (true, null);
+        if (!PuedeTransicionar(solicitud.Estado, nuevoEstado))
+            return new(false, $"No se puede pasar de {solicitud.Estado} a {nuevoEstado}.", solicitud);
+
+        solicitud.Estado = nuevoEstado;
+        await _db.SaveChangesAsync();
+        return new(true, null, solicitud);
     }
 
     // RF-GP-01
@@ -79,33 +84,40 @@ public class SolicitudPermisoService
             .ToListAsync();
     }
 
+    // Carga la solicitud y aplica RF-GP-07 en un unico lugar para aprobar y rechazar
+    private async Task<(SolicitudPermiso? Solicitud, string? Error)> CargarParaResolverAsync(int solicitudId, int resolutorId)
+    {
+        var solicitud = await _db.Solicitudes.FindAsync(solicitudId);
+        if (solicitud is null) return (null, "Solicitud no encontrada.");
+        if (solicitud.SolicitanteId == resolutorId) return (solicitud, "No puedes resolver tu propia solicitud.");
+        return (solicitud, null);
+    }
+
     // RF-GP-03, RF-GP-05, RF-GP-06, RF-GP-07
     public async Task<ResultadoPermiso> AprobarAsync(int solicitudId, int aprobadorId)
     {
-        var solicitud = await _db.Solicitudes.FindAsync(solicitudId);
-        if (solicitud is null)
-            return new(false, "Solicitud no encontrada.");
+        var (solicitud, error) = await CargarParaResolverAsync(solicitudId, aprobadorId);
+        if (error is not null)
+            return new(false, error, solicitud);
 
-        // RF-GP-07: nadie resuelve su propia solicitud
-        if (solicitud.SolicitanteId == aprobadorId)
-            return new(false, "No puedes resolver tu propia solicitud.", solicitud);
-
-        var aprobada = Transicionar(solicitud, EstadoSolicitud.Aprobada);
-        if (!aprobada.Exitoso)
-            return new(false, aprobada.Error, solicitud);
+        if (!PuedeTransicionar(solicitud!.Estado, EstadoSolicitud.Aprobada))
+            return new(false, $"No se puede pasar de {solicitud.Estado} a {EstadoSolicitud.Aprobada}.", solicitud);
 
         // RF-GP-03: queda registrado quien aprobo y cuando
+        solicitud.Estado = EstadoSolicitud.Aprobada;
         solicitud.AprobadorId = aprobadorId;
         solicitud.FechaResolucion = DateTime.UtcNow;
 
-        // RF-GP-05: el cambio de permiso se aplica automaticamente, en la misma operacion
+        // RF-GP-05: el permiso se aplica en la misma operacion
         _db.PermisosOtorgados.Add(new PermisoOtorgado
         {
             UsuarioId = solicitud.SolicitanteId,
             Permiso = solicitud.PermisoSolicitado,
             SolicitudId = solicitud.Id
         });
-        Transicionar(solicitud, EstadoSolicitud.Aplicada);
+
+        // Aprobada -> Aplicada: automatica e inmediata
+        solicitud.Estado = EstadoSolicitud.Aplicada;
 
         await _db.SaveChangesAsync();
         return new(true, null, solicitud);
@@ -114,21 +126,18 @@ public class SolicitudPermisoService
     // RF-GP-04, RF-GP-06, RF-GP-07
     public async Task<ResultadoPermiso> RechazarAsync(int solicitudId, int aprobadorId, string motivo)
     {
-        var solicitud = await _db.Solicitudes.FindAsync(solicitudId);
-        if (solicitud is null)
-            return new(false, "Solicitud no encontrada.");
+        var (solicitud, error) = await CargarParaResolverAsync(solicitudId, aprobadorId);
+        if (error is not null)
+            return new(false, error, solicitud);
 
-        if (solicitud.SolicitanteId == aprobadorId)
-            return new(false, "No puedes resolver tu propia solicitud.", solicitud);
-
-        if (!PuedeTransicionar(solicitud.Estado, EstadoSolicitud.Rechazada))
+        if (!PuedeTransicionar(solicitud!.Estado, EstadoSolicitud.Rechazada))
             return new(false, $"No se puede pasar de {solicitud.Estado} a {EstadoSolicitud.Rechazada}.", solicitud);
 
         // RF-GP-04: sin motivo escrito el rechazo no se completa
         if (string.IsNullOrWhiteSpace(motivo))
             return new(false, "El motivo del rechazo es obligatorio.", solicitud);
 
-        Transicionar(solicitud, EstadoSolicitud.Rechazada);
+        solicitud.Estado = EstadoSolicitud.Rechazada;
         solicitud.AprobadorId = aprobadorId;
         solicitud.FechaResolucion = DateTime.UtcNow;
         solicitud.MotivoRechazo = motivo.Trim();
