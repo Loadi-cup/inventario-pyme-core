@@ -7,14 +7,16 @@ public class AuthService : IAuthService
 {
     private readonly InventarioDbContext _db;
     private readonly ServicioJwt _jwt;
+    private readonly OpcionesApp _app;
 
     private const int MaxIntentosFallidos = 5;
     private static readonly TimeSpan DuracionBloqueo = TimeSpan.FromMinutes(15);
 
-    public AuthService(InventarioDbContext db, ServicioJwt jwt)
+    public AuthService(InventarioDbContext db, ServicioJwt jwt, OpcionesApp app)
     {
         _db = db;
         _jwt = jwt;
+        _app = app;
     }
 
     public async Task<ResultadoRegistro> RegistrarAsync(string nombre, string correo, string contrasena)
@@ -209,7 +211,7 @@ public class AuthService : IAuthService
         };
         _db.CodigosRecuperacion.Add(codigo);
 
-        var enlace = $"https://localhost:5118/api/auth/restablecer?codigo={codigo.Codigo}";
+        var enlace = $"{_app.UrlBase}/api/auth/restablecer?codigo={codigo.Codigo}";
         _db.CorreosEnCola.Add(new CorreoEnCola
         {
             Destinatario = usuario.Correo,
@@ -260,7 +262,7 @@ public class AuthService : IAuthService
         };
         _db.CodigosRecuperacion.Add(codigo);
 
-        var enlace = $"https://localhost:5118/api/auth/restablecer?codigo={codigo.Codigo}";
+        var enlace = $"{_app.UrlBase}/api/auth/restablecer?codigo={codigo.Codigo}";
         _db.CorreosEnCola.Add(new CorreoEnCola
         {
             Destinatario = usuario.Correo,
@@ -303,7 +305,7 @@ public class AuthService : IAuthService
         };
         _db.TokensActivacion.Add(token);
 
-        var enlace = $"https://localhost:5118/api/auth/activar?codigo={token.Codigo}";
+        var enlace = $"{_app.UrlBase}/api/auth/activar?codigo={token.Codigo}";
         _db.CorreosEnCola.Add(new CorreoEnCola
         {
             Destinatario = usuario.Correo,

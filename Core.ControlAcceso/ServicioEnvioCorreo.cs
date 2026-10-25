@@ -6,25 +6,28 @@ using Core.ControlAcceso.Modelos;
 
 namespace Core.ControlAcceso;
 
+public record OpcionesSmtp(string Host, int Puerto, string Usuario, string Contrasena, string Remitente);
+
 public class ServicioEnvioCorreo
 {
     private readonly InventarioDbContext _db;
-    private readonly string _usuarioSmtp;
-    private readonly string _contrasenaSmtp;
+    private readonly OpcionesSmtp _smtp;
 
     private const int MaxIntentos = 3;
 
-    public ServicioEnvioCorreo(InventarioDbContext db, string usuarioSmtp, string contrasenaSmtp)
+    public ServicioEnvioCorreo(InventarioDbContext db, OpcionesSmtp smtp)
     {
         _db = db;
-        _usuarioSmtp = usuarioSmtp;
-        _contrasenaSmtp = contrasenaSmtp;
+        _smtp = smtp;
     }
 
+    // RF-NOT-09 y RF-NOT-12: toma los pendientes y los envia. Un correo ya enviado
+    // cambia a Enviado y no se vuelve a tomar, asi que ejecutarlo dos veces no duplica.
     public async Task<int> ProcesarPendientesAsync()
     {
         var pendientes = await _db.CorreosEnCola
             .Where(c => c.Estado == EstadoCorreo.Pendiente)
+            .OrderBy(c => c.Id)
             .ToListAsync();
 
         var enviados = 0;
@@ -36,6 +39,7 @@ public class ServicioEnvioCorreo
                 await EnviarPorSmtpAsync(correo.Destinatario, correo.Asunto, correo.Cuerpo);
                 correo.Estado = EstadoCorreo.Enviado;
                 correo.FechaEnvio = DateTime.UtcNow;
+                correo.UltimoError = null;
                 enviados++;
             }
             catch (Exception ex)
@@ -48,6 +52,7 @@ public class ServicioEnvioCorreo
                     correo.Estado = EstadoCorreo.Fallido;
             }
 
+            // Se guarda despues de cada correo para no duplicar si el proceso se interrumpe
             await _db.SaveChangesAsync();
         }
 
@@ -57,14 +62,15 @@ public class ServicioEnvioCorreo
     private async Task EnviarPorSmtpAsync(string destinatario, string asunto, string cuerpo)
     {
         var mensaje = new MimeMessage();
-        mensaje.From.Add(MailboxAddress.Parse(_usuarioSmtp));
+        mensaje.From.Add(MailboxAddress.Parse(_smtp.Remitente));
         mensaje.To.Add(MailboxAddress.Parse(destinatario));
         mensaje.Subject = asunto;
         mensaje.Body = new TextPart("plain") { Text = cuerpo };
 
         using var cliente = new SmtpClient();
-        await cliente.ConnectAsync("smtp.gmail.com", 587, SecureSocketOptions.StartTls);
-        await cliente.AuthenticateAsync(_usuarioSmtp, _contrasenaSmtp);
+        // Auto elige SSL directo en el 465 y STARTTLS en el 587
+        await cliente.ConnectAsync(_smtp.Host, _smtp.Puerto, SecureSocketOptions.Auto);
+        await cliente.AuthenticateAsync(_smtp.Usuario, _smtp.Contrasena);
         await cliente.SendAsync(mensaje);
         await cliente.DisconnectAsync(true);
     }
