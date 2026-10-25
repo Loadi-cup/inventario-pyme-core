@@ -261,3 +261,14 @@ dotnet test Core.Permisos.Tests
 ```
 
 Las pruebas ejercitan `Core.Permisos` directamente, con SQLite en memoria y sin levantar la aplicación (RD-12). Cada prueba crea su propia base, así que son independientes y pasan en cualquier orden. Cubren la transición válida (aprobar y rechazar, con aprobador, fecha y motivo) y las transiciones prohibidas (aprobar dos veces, aprobar una rechazada, rechazar sin motivo y aprobar la solicitud propia), verificando siempre que el estado no cambia.
+
+## Defectos (Práctica 2, variante A)
+
+Cada defecto se planta en `Core.Permisos/SolicitudPermisoService.cs` sobre la etiqueta `practica-2` (etiqueta `practica-2-defecto-N`). Las líneas indicadas son las del punto etiquetado `practica-2`. Comando para verificar: `dotnet test Core.Permisos.Tests`.
+
+- **Defecto 1** (RF-GP-06, línea 103, condición de `AprobarAsync`): lo detecta `RF_GP_06_Aprobar_DosVeces_SeRechazaYElEstadoNoCambia`, que comprueba que aprobar dos veces la misma solicitud se rechaza y el estado no cambia.
+- **Defecto 2** (RF-GP-06, línea 18, transición Rechazada → Aplicada): lo detecta `RF_GP_06_Transicionar_FueraDeLaTabla_SeRechazaYElEstadoNoCambia` con el caso Rechazada → Aplicada, que comprueba que una transición fuera de la tabla se rechaza y el estado no cambia.
+- **Defecto 3** (RF-GP-07, línea 92, verificación de solicitud propia): lo detecta `RF_GP_07_Aprobar_LaPropiaSolicitud_SeRechazaYSigueEnPendiente`, que comprueba que un Administrador no puede aprobar su propia solicitud y esta sigue Pendiente.
+- **Defecto 4** (RF-GP-02, línea 82, consulta del usuario): lo detecta `RF_GP_02_ListarDeUsuario_NoMuestraSolicitudesDeOtrosUsuarios`, que comprueba que un usuario solo ve sus solicitudes y no las de otros.
+- **Defecto 5** (RF-GP-06, línea 16, transición Aprobada → Pendiente): lo detecta `RF_GP_06_Transicionar_FueraDeLaTabla_SeRechazaYElEstadoNoCambia` con el caso Aprobada → Pendiente, que comprueba que la solicitud no puede volver a Pendiente.
+- **Defecto 6** (RF-GP-04, línea 143, guardado del motivo): lo detecta `RF_GP_04_Rechazar_GuardaElMotivoEscrito`, que comprueba que al rechazar queda guardado el motivo escrito.
