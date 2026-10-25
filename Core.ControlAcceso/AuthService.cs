@@ -216,7 +216,7 @@ public class AuthService : IAuthService
         {
             Destinatario = usuario.Correo,
             Asunto = "Recupera tu contrasena - Inventario Pyme",
-            Cuerpo = $"Hola {usuario.Nombre}, usa este enlace para definir una nueva contrasena: {enlace}"
+            Cuerpo = $"Hola {usuario.Nombre}, tu codigo de recuperacion es: {codigo.Codigo} (vence en 1 hora). Para definir una nueva contrasena, envialo con POST {_app.UrlBase}/api/auth/restablecer junto con tu nueva contrasena."
         });
 
         await _db.SaveChangesAsync();
@@ -267,7 +267,7 @@ public class AuthService : IAuthService
         {
             Destinatario = usuario.Correo,
             Asunto = "Tu contrasena fue restablecida - Inventario Pyme",
-            Cuerpo = $"Hola {usuario.Nombre}, un administrador restablecio tu contrasena. Define una nueva aqui: {enlace}"
+            Cuerpo = $"Hola {usuario.Nombre}, un administrador restablecio tu contrasena. Tu codigo para definir una nueva es: {codigo.Codigo} (vence en 1 hora). Envialo con POST {_app.UrlBase}/api/auth/restablecer junto con tu nueva contrasena."
         });
 
         await _db.SaveChangesAsync();
