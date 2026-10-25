@@ -1,80 +1,105 @@
-# Inventario Pyme Core
+﻿# Inventario Pyme Core
 
 Sistema de gestión de inventario para pequeños negocios. Proyecto de Programación III — ITLA 2026-C-3.
 
 - **Autor:** Loadi Romero
 - **Lenguaje/Framework:** C# / ASP.NET Core 10
-- **Base de datos:** SQLite (archivo `inventario.db`, generado automáticamente)
+- **Base de datos:** SQLite (archivo `inventario.db`, se crea sola al arrancar)
 
 ## Estructura del proyecto
 
 - `Core.ControlAcceso` — Pieza 1 del Core: usuarios, sesión, roles, recuperación de contraseña.
 - `Core.Negocio` — Módulo de negocio: productos, proveedores, órdenes de compra y su máquina de estados.
-- `Api` — ASP.NET Core Web API que expone los endpoints de ambas piezas.
+- `Core.Permisos` — Gestión de permisos (solicitudes, aprobación, rechazo).
+- `Core.Permisos.Tests` — Suite de pruebas de `Core.Permisos`.
+- `Api` — ASP.NET Core Web API que expone los endpoints.
 - `docs/maquina-de-estados.md` — Tabla de transiciones de la máquina de estados del negocio.
 
 ## Requisitos
 
 - [.NET SDK 10](https://dotnet.microsoft.com/download)
-- Una cuenta de Gmail con verificación en dos pasos activada, para generar una contraseña de aplicación (solo si se va a probar el envío real de correo).
+- Una cuenta de correo SMTP (Gmail con contraseña de aplicación) solo si se quiere probar el envío real de correos.
 
-## Variables de entorno necesarias
+## Variables de entorno
 
-La aplicación no arranca si faltan. Se configuran como variables de entorno de usuario en Windows (PowerShell):
+Se definen en la misma ventana de PowerShell donde se arranca el servidor (valen solo para esa ventana):
 
 ```powershell
-[System.Environment]::SetEnvironmentVariable('Jwt__Clave', '<una cadena aleatoria de 32+ caracteres>', 'User')
-[System.Environment]::SetEnvironmentVariable('Smtp__Usuario', '<tu correo de Gmail>', 'User')
-[System.Environment]::SetEnvironmentVariable('Smtp__ContrasenaApp', '<contraseña de aplicación de Gmail, sin espacios>', 'User')
+$env:Jwt__Clave = "<cadena aleatoria de 32+ caracteres>"
+$env:Admin__Correo = "admin@ejemplo.com"
+$env:Admin__Contrasena = "Admin12345"
 ```
 
 | Variable | Para qué sirve |
 |---|---|
 | `Jwt__Clave` | Firma los tokens de sesión (JWT). Cualquier cadena larga y aleatoria. |
-| `Smtp__Usuario` | Cuenta de Gmail desde la que se envían los correos de activación y recuperación. |
-| `Smtp__ContrasenaApp` | Contraseña de aplicación generada en https://myaccount.google.com/apppasswords (no la contraseña normal de la cuenta). |
+| `Admin__Correo` / `Admin__Contrasena` | Crean el Administrador inicial al arrancar, si no existe. No hace falta tocar la base de datos. |
+| `Smtp__Usuario` | Cuenta desde la que se envían los correos de activación y recuperación. Solo para el envío real. |
+| `Smtp__ContrasenaApp` | Contraseña de aplicación de esa cuenta (no la contraseña normal). Solo para el envío real. |
 
-Después de configurarlas, cierra y vuelve a abrir la terminal/VS Code para que se carguen.
+Ninguna credencial está en el código ni en el repositorio.
 
 ## Cómo ejecutar el proyecto
 
 ```powershell
 git clone https://github.com/Loadi-cup/inventario-pyme-core.git
 cd inventario-pyme-core
-dotnet ef database update --project Core.ControlAcceso --startup-project Api
-dotnet ef database update --project Core.Negocio --startup-project Api --context NegocioDbContext
+# definir las variables de entorno de la sección anterior
 dotnet run --project Api
 ```
 
-El servidor queda escuchando en `http://localhost:5118`.
+Las migraciones se aplican solas al arrancar y `inventario.db` se crea si no existe. El servidor escucha en `http://localhost:5118` (solo HTTP).
 
-## Cómo provocar cada criterio de aceptación
+## Envío de correos
 
-Todas las pruebas se hacen con `Invoke-RestMethod` en PowerShell, o con Postman/Swagger si se prefiere.
+Los correos de activación y recuperación se guardan en una cola y se envían con un comando independiente, fuera del servidor:
+
+```powershell
+$env:Smtp__Usuario = "<correo del remitente>"
+$env:Smtp__ContrasenaApp = "<contraseña de aplicación>"
+dotnet run --no-build --project Api -- enviar-correos
+```
+
+Imprime `Correos enviados: N`. Ejecutarlo dos veces seguidas no reenvía los correos ya enviados. Cada correo tiene estados `Pendiente`, `Enviado` y `Fallido`, con un máximo de 3 intentos.
+
+**Nota de entorno:** en la máquina de desarrollo, Google rechazó las credenciales SMTP y no se pudo confirmar el envío real. El código usa MailKit con STARTTLS en el puerto 587. Quien lo pruebe debe definir sus propias variables `Smtp__*`.
+
+Los códigos de activación y recuperación llegan **en el cuerpo del correo** (no hay enlace GET que abrir).
+
+## Cómo provocar cada criterio de Control de acceso
+
+Se usa `Invoke-RestMethod` en PowerShell, o Postman.
+
+### Administrador inicial
+
+Al arrancar con `Admin__Correo` y `Admin__Contrasena` definidos, el sistema crea ese usuario como Administrador activo.
+
+```powershell
+$login = @{ correo = "admin@ejemplo.com"; contrasena = "Admin12345" } | ConvertTo-Json
+$tokenAdmin = (Invoke-RestMethod -Uri "http://localhost:5118/api/auth/login" -Method Post -Body $login -ContentType "application/json").token
+Invoke-RestMethod -Uri "http://localhost:5118/api/admin/usuarios" -Headers @{ Authorization = "Bearer $tokenAdmin" }
+```
 
 ### Registro y activación (RF-CA-01, 02, 14, 15, 16, 17)
 
 ```powershell
-# Registro
 $body = @{ nombre = "Prueba"; correo = "correo@ejemplo.com"; contrasena = "Clave1234" } | ConvertTo-Json
 Invoke-RestMethod -Uri "http://localhost:5118/api/auth/registro" -Method Post -Body $body -ContentType "application/json"
+# Repetir el registro: se rechaza por correo duplicado (RF-CA-01)
+# Registrar con "abc" como contraseña: se rechaza por política (RF-CA-14)
 
-# Repetir el mismo registro: debe rechazarse por correo duplicado (RF-CA-01)
-# Registrar con "abc" como contraseña: debe rechazarse por politica (RF-CA-14)
+# Enviar el correo de activación (comando independiente)
+dotnet run --no-build --project Api -- enviar-correos
 
-# Procesar la cola para enviar el correo de activacion
-Invoke-RestMethod -Uri "http://localhost:5118/api/admin/enviar-correos-pendientes" -Method Post
-
-# Intentar login antes de activar: debe rechazarse (RF-CA-15)
+# Login antes de activar: se rechaza (RF-CA-15)
 $bodyLogin = @{ correo = "correo@ejemplo.com"; contrasena = "Clave1234" } | ConvertTo-Json
 Invoke-RestMethod -Uri "http://localhost:5118/api/auth/login" -Method Post -Body $bodyLogin -ContentType "application/json"
 
-# Activar con el codigo recibido por correo (o visto en /api/admin/diagnostico-correos en desarrollo)
+# Activar con el código recibido por correo
 Invoke-RestMethod -Uri "http://localhost:5118/api/auth/activar?codigo=<codigo-del-correo>" -Method Get
+# Usar el mismo código otra vez: se rechaza (RF-CA-16)
 
-# Usar el mismo enlace una segunda vez: debe rechazarse (RF-CA-16)
-
-# Reenviar activacion con correo inexistente y uno existente: misma respuesta (RF-CA-17)
+# Reenviar activación con correo inexistente y existente: misma respuesta (RF-CA-17)
 $bodyReenvio = @{ correo = "correo@ejemplo.com" } | ConvertTo-Json
 Invoke-RestMethod -Uri "http://localhost:5118/api/auth/reenviar-activacion" -Method Post -Body $bodyReenvio -ContentType "application/json"
 ```
@@ -82,83 +107,55 @@ Invoke-RestMethod -Uri "http://localhost:5118/api/auth/reenviar-activacion" -Met
 ### Sesión (RF-CA-03, 07, 18, 19)
 
 ```powershell
-# Login correcto (cuenta ya activada)
 $token = (Invoke-RestMethod -Uri "http://localhost:5118/api/auth/login" -Method Post -Body $bodyLogin -ContentType "application/json").token
-
-# Consultar quien soy (requiere token)
-Invoke-RestMethod -Uri "http://localhost:5118/api/auth/yo" -Method Get -Headers @{ Authorization = "Bearer $token" }
-
-# Cerrar sesion
+Invoke-RestMethod -Uri "http://localhost:5118/api/auth/yo" -Headers @{ Authorization = "Bearer $token" }
 Invoke-RestMethod -Uri "http://localhost:5118/api/auth/logout" -Method Post -Headers @{ Authorization = "Bearer $token" }
-
-# Volver a usar el mismo token tras el logout: debe rechazarse (RF-CA-18)
-Invoke-RestMethod -Uri "http://localhost:5118/api/auth/yo" -Method Get -Headers @{ Authorization = "Bearer $token" }
-
-# Fallar el login 5 veces seguidas con contrasena incorrecta, y comprobar que el 6to intento
-# (aun con la contrasena correcta) se rechaza durante 15 minutos (RF-CA-19)
+# Reusar el token tras el logout: se rechaza (RF-CA-18)
+Invoke-RestMethod -Uri "http://localhost:5118/api/auth/yo" -Headers @{ Authorization = "Bearer $token" }
+# 5 logins fallidos seguidos: el 6.º se rechaza durante 15 minutos aunque la clave sea correcta (RF-CA-19)
 ```
 
 ### Roles y administración (RF-CA-04, 05, 06, 08, 20, 21)
 
-El primer usuario Administrador se crea manualmente en la base de datos (no hay un endpoint de "primer admin" en esta entrega). Con un cliente SQLite, actualizar la columna `Rol` del usuario deseado a `1` (Administrador) en la tabla `Usuarios`.
+Todos los endpoints de `/api/admin/` exigen sesión de Administrador.
 
 ```powershell
-# Login como Administrador
-$tokenAdmin = (Invoke-RestMethod -Uri "http://localhost:5118/api/auth/login" -Method Post -Body $bodyAdminLogin -ContentType "application/json").token
+$ha = @{ Authorization = "Bearer $tokenAdmin" }
+Invoke-RestMethod -Uri "http://localhost:5118/api/admin/usuarios" -Headers $ha                                  # RF-CA-21
+Invoke-RestMethod -Uri "http://localhost:5118/api/admin/usuarios" -Headers @{ Authorization = "Bearer $token" } # Estándar: rechazado (RF-CA-05, 06, RD-06)
+Invoke-RestMethod -Uri "http://localhost:5118/api/admin/usuarios"                                               # sin sesión: rechazado
 
-# Listar usuarios (RF-CA-21)
-Invoke-RestMethod -Uri "http://localhost:5118/api/admin/usuarios" -Method Get -Headers @{ Authorization = "Bearer $tokenAdmin" }
-
-# Un Estandar intentando listar usuarios: debe rechazarse, incluso llamando el endpoint directamente (RF-CA-05, 06, RD-06)
-Invoke-RestMethod -Uri "http://localhost:5118/api/admin/usuarios" -Method Get -Headers @{ Authorization = "Bearer $token" }
-
-# Cambiar rol de otro usuario (RF-CA-08)
 $bodyRol = @{ nuevoRol = "Administrador" } | ConvertTo-Json
-Invoke-RestMethod -Uri "http://localhost:5118/api/admin/usuarios/2/rol" -Method Put -Body $bodyRol -ContentType "application/json" -Headers @{ Authorization = "Bearer $tokenAdmin" }
-
-# Intentar cambiar el propio rol: debe rechazarse
-
-# Desactivar un usuario y probar que su sesion deja de funcionar (RF-CA-20)
-Invoke-RestMethod -Uri "http://localhost:5118/api/admin/usuarios/2/desactivar" -Method Post -Headers @{ Authorization = "Bearer $tokenAdmin" }
-
-# Intentar desactivarse a si mismo: debe rechazarse
+Invoke-RestMethod -Uri "http://localhost:5118/api/admin/usuarios/2/rol" -Method Put -Body $bodyRol -ContentType "application/json" -Headers $ha   # RF-CA-08
+Invoke-RestMethod -Uri "http://localhost:5118/api/admin/usuarios/2/desactivar" -Method Post -Headers $ha                                          # RF-CA-20
+# Cambiar el propio rol o desactivarse a sí mismo: se rechaza
 ```
 
 ### Contraseñas (RF-CA-09 a 13, 22)
 
 ```powershell
-# Solicitar recuperacion (misma respuesta exista o no el correo) (RF-CA-09)
 $bodyRecuperar = @{ correo = "correo@ejemplo.com" } | ConvertTo-Json
-Invoke-RestMethod -Uri "http://localhost:5118/api/auth/recuperar" -Method Post -Body $bodyRecuperar -ContentType "application/json"
-Invoke-RestMethod -Uri "http://localhost:5118/api/admin/enviar-correos-pendientes" -Method Post
+Invoke-RestMethod -Uri "http://localhost:5118/api/auth/recuperar" -Method Post -Body $bodyRecuperar -ContentType "application/json"   # misma respuesta exista o no (RF-CA-09)
+dotnet run --no-build --project Api -- enviar-correos
 
-# Restablecer con el codigo recibido (RF-CA-10, 11)
+# El correo trae un código; se usa en el cuerpo de la petición (RF-CA-10, 11, 13)
 $bodyRestablecer = @{ codigo = "<codigo-del-correo>"; nuevaContrasena = "ClaveNueva123" } | ConvertTo-Json
 Invoke-RestMethod -Uri "http://localhost:5118/api/auth/restablecer" -Method Post -Body $bodyRestablecer -ContentType "application/json"
+# El token viejo tras restablecer: se rechaza (RF-CA-12)
 
-# Probar el token viejo tras el restablecimiento: debe rechazarse (RF-CA-12)
+Invoke-RestMethod -Uri "http://localhost:5118/api/admin/usuarios/2/forzar-restablecimiento" -Method Post -Headers $ha   # RF-CA-13
 
-# Restablecimiento forzado por Administrador (RF-CA-13)
-Invoke-RestMethod -Uri "http://localhost:5118/api/admin/usuarios/2/forzar-restablecimiento" -Method Post -Headers @{ Authorization = "Bearer $tokenAdmin" }
-
-# Cambiar contrasena con sesion, indicando la actual (RF-CA-22)
 $bodyCambiar = @{ contrasenaActual = "ClaveNueva123"; contrasenaNueva = "OtraClave456" } | ConvertTo-Json
-Invoke-RestMethod -Uri "http://localhost:5118/api/auth/cambiar-contrasena" -Method Post -Body $bodyCambiar -ContentType "application/json" -Headers @{ Authorization = "Bearer $token" }
+Invoke-RestMethod -Uri "http://localhost:5118/api/auth/cambiar-contrasena" -Method Post -Body $bodyCambiar -ContentType "application/json" -Headers @{ Authorization = "Bearer $token" }   # RF-CA-22
 ```
 
 ### Correo por cola (RF-NOT-08, 09, 12, 13)
 
-El endpoint `POST /api/admin/enviar-correos-pendientes` procesa la cola de forma independiente a la operación que generó el correo. Ejecutarlo dos veces seguidas no reenvía los correos ya marcados como `Enviado`. Las credenciales SMTP se leen de `Smtp__Usuario` y `Smtp__ContrasenaApp` (variables de entorno), nunca están en el código ni en el repositorio.
-
-**Nota de entorno:** en la máquina de desarrollo usada para esta entrega, Google bloqueó temporalmente el acceso SMTP con un aviso de verificación de seguridad en la cuenta, impidiendo confirmar el envío real al cierre del plazo. El código usa MailKit con STARTTLS en el puerto 587 y maneja reintentos (máximo 3) y estados (`Pendiente`, `Enviado`, `Fallido`) según el requisito. Puede probarse en un entorno sin ese bloqueo.
+Ver la sección «Envío de correos». El envío es independiente de la operación que generó el correo.
 
 ### Máquina de estados del negocio (RF-NEG-03, 04, 05)
 
-Los estados y transiciones están declarados en `Core.Negocio/Modelos/EstadoOrdenCompra.cs` y `Core.Negocio/OrdenDeCompraService.cs`, respectivamente. La tabla completa de transiciones está en `docs/maquina-de-estados.md`.
-
-## Diagnóstico (solo para desarrollo)
-
-`GET /api/admin/diagnostico-correos` — lista el contenido de la cola de correos, útil para ver el código de activación/recuperación sin depender del envío real durante el desarrollo. No está pensado para producción.
+Los estados y transiciones están en `Core.Negocio/Modelos/EstadoOrdenCompra.cs` y `Core.Negocio/OrdenDeCompraService.cs`. La tabla completa está en `docs/maquina-de-estados.md`.
 
 ## Gestión de permisos (Asignación 2)
 
@@ -168,32 +165,21 @@ Transiciones válidas: `Pendiente → Aprobada → Aplicada` y `Pendiente → Re
 
 ### Preparar y arrancar
 
+Con las variables de entorno definidas:
+
 ```powershell
-dotnet ef database update --project Core.ControlAcceso --startup-project Api
-dotnet ef database update --project Core.Negocio --startup-project Api --context NegocioDbContext
-dotnet ef database update --project Core.Permisos --startup-project Api --context PermisosDbContext
 dotnet run --project Api
 ```
 
-Requiere las variables de entorno de la sección anterior. El servidor queda en `http://localhost:5118`.
-
 ### Usuarios necesarios
 
-1. Registrar dos usuarios (`POST /api/auth/registro`), por ejemplo `std@ejemplo.com` y `adm@ejemplo.com`.
-2. Con el servidor detenido, activarlos y convertir uno en Administrador sobre `Api/inventario.db`:
-
-```sql
-UPDATE Usuarios SET Activo = 1 WHERE Correo IN ('std@ejemplo.com', 'adm@ejemplo.com');
-UPDATE Usuarios SET Rol = 1 WHERE Correo = 'adm@ejemplo.com';
-```
-
-3. Arrancar de nuevo el servidor y obtener los tokens:
+1. El Administrador ya existe por `Admin__Correo` / `Admin__Contrasena`. Obtener su token como en «Administrador inicial».
+2. Registrar un usuario Estándar (`POST /api/auth/registro`), enviar el correo con `enviar-correos` y activarlo con el código recibido.
+3. Obtener su token:
 
 ```powershell
-$loginStd = @{ correo = "std@ejemplo.com"; contrasena = "<clave>" } | ConvertTo-Json
+$loginStd = @{ correo = "<correo>"; contrasena = "<clave>" } | ConvertTo-Json
 $tokenEstandar = (Invoke-RestMethod -Uri "http://localhost:5118/api/auth/login" -Method Post -Body $loginStd -ContentType "application/json").token
-$loginAdm = @{ correo = "adm@ejemplo.com"; contrasena = "<clave>" } | ConvertTo-Json
-$tokenAdmin = (Invoke-RestMethod -Uri "http://localhost:5118/api/auth/login" -Method Post -Body $loginAdm -ContentType "application/json").token
 ```
 
 ### Cómo provocar cada criterio
@@ -224,11 +210,11 @@ Probar "$base/pendientes" Get $ha $null
 Probar "$base/mias" Get $h $null
 Probar "$base/pendientes" Get $h $null
 
-# RF-GP-03 y RF-GP-05: aprobar deja aprobador y fecha, y el permiso queda aplicado sin más pasos
+# RF-GP-03 y RF-GP-05: aprobar deja aprobador y fecha, y el permiso queda aplicado
 Probar "$base/1/aprobar" Post $ha $null
 Probar "$base/tengo?permiso=exportar-reportes" Get $h $null
 
-# RF-GP-06: aprobar dos veces la misma solicitud se rechaza y el estado no cambia
+# RF-GP-06: aprobar dos veces se rechaza y el estado no cambia
 Probar "$base/1/aprobar" Post $ha $null
 
 # RF-GP-04: rechazar sin motivo no se completa; con motivo sí (solicitud 2)
@@ -254,13 +240,13 @@ RD-09: detener el servidor con `Ctrl + C`, volver a arrancarlo y repetir `Probar
 
 ## Pruebas
 
-Un solo comando, desde la raíz de un clon limpio, ejecuta toda la suite:
+Un solo comando, desde la raíz de un clon limpio, ejecuta toda la suite (45 pruebas):
 
 ```powershell
 dotnet test Core.Permisos.Tests
 ```
 
-Las pruebas ejercitan `Core.Permisos` directamente, con SQLite en memoria y sin levantar la aplicación (RD-12). Cada prueba crea su propia base, así que son independientes y pasan en cualquier orden. Cubren la transición válida (aprobar y rechazar, con aprobador, fecha y motivo) y las transiciones prohibidas (aprobar dos veces, aprobar una rechazada, rechazar sin motivo y aprobar la solicitud propia), verificando siempre que el estado no cambia.
+Las pruebas ejercitan `Core.Permisos` directamente, con SQLite en memoria y sin levantar la aplicación (RD-12). Cada prueba crea su propia base, así que son independientes y pasan en cualquier orden. Cada nombre lleva el ID del requisito que verifica. Cubren las transiciones válidas (aprobar y rechazar, con aprobador, fecha y motivo) y todas las prohibidas contra la tabla de transiciones, además de rechazar sin motivo y aprobar la solicitud propia, verificando siempre que el estado no cambia.
 
 ## Defectos (Práctica 2, variante A)
 
