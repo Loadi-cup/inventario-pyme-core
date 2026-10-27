@@ -140,7 +140,6 @@ public class SolicitudPermisoService
         solicitud.Estado = EstadoSolicitud.Rechazada;
         solicitud.AprobadorId = aprobadorId;
         solicitud.FechaResolucion = DateTime.UtcNow;
-        solicitud.MotivoRechazo = motivo.Trim();
 
         await _db.SaveChangesAsync();
         return new(true, null, solicitud);
