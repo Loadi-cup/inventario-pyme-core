@@ -100,7 +100,7 @@ public class SolicitudPermisoService
         if (error is not null)
             return new(false, error, solicitud);
 
-        if (!PuedeTransicionar(solicitud!.Estado, EstadoSolicitud.Aprobada))
+        if (solicitud!.Estado == EstadoSolicitud.Rechazada)
             return new(false, $"No se puede pasar de {solicitud.Estado} a {EstadoSolicitud.Aprobada}.", solicitud);
 
         // RF-GP-03: queda registrado quien aprobo y cuando
