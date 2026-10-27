@@ -15,7 +15,7 @@ public class SolicitudPermisoService
         [EstadoSolicitud.Pendiente] = new[] { EstadoSolicitud.Aprobada, EstadoSolicitud.Rechazada },
         [EstadoSolicitud.Aprobada] = new[] { EstadoSolicitud.Aplicada },
         [EstadoSolicitud.Aplicada] = Array.Empty<EstadoSolicitud>(),
-        [EstadoSolicitud.Rechazada] = Array.Empty<EstadoSolicitud>()
+        [EstadoSolicitud.Rechazada] = new[] { EstadoSolicitud.Aplicada }
     };
 
     public SolicitudPermisoService(PermisosDbContext db)
