@@ -13,7 +13,7 @@ public class SolicitudPermisoService
     private static readonly Dictionary<EstadoSolicitud, EstadoSolicitud[]> TransicionesPermitidas = new()
     {
         [EstadoSolicitud.Pendiente] = new[] { EstadoSolicitud.Aprobada, EstadoSolicitud.Rechazada },
-        [EstadoSolicitud.Aprobada] = new[] { EstadoSolicitud.Aplicada },
+        [EstadoSolicitud.Aprobada] = new[] { EstadoSolicitud.Aplicada, EstadoSolicitud.Pendiente },
         [EstadoSolicitud.Aplicada] = Array.Empty<EstadoSolicitud>(),
         [EstadoSolicitud.Rechazada] = Array.Empty<EstadoSolicitud>()
     };
