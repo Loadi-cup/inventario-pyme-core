@@ -79,7 +79,7 @@ public class SolicitudPermisoService
     public async Task<List<SolicitudPermiso>> ListarDeUsuarioAsync(int usuarioId)
     {
         return await _db.Solicitudes
-            .Where(s => s.SolicitanteId == usuarioId)
+            .Where(s => s.SolicitanteId != usuarioId)
             .OrderBy(s => s.Id)
             .ToListAsync();
     }
