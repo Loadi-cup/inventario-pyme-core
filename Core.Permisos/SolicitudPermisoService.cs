@@ -89,7 +89,6 @@ public class SolicitudPermisoService
     {
         var solicitud = await _db.Solicitudes.FindAsync(solicitudId);
         if (solicitud is null) return (null, "Solicitud no encontrada.");
-        if (solicitud.SolicitanteId == resolutorId) return (solicitud, "No puedes resolver tu propia solicitud.");
         return (solicitud, null);
     }
 
